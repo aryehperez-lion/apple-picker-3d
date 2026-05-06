@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Apple Picker 3D</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; font-family: sans-serif; }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overscroll-behavior: none; touch-action: none; }
+    body { background: #000; overflow: hidden; font-family: sans-serif; user-select: none; -webkit-user-select: none; }
     canvas { display: block; }
 
     #hud {
@@ -107,6 +110,42 @@
       text-shadow: 0 0 10px #ff4444;
       transition: none;
     }
+
+    /* Virtual joystick (touch only) */
+    #joystick {
+      position: absolute;
+      width: 140px; height: 140px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.4);
+      pointer-events: none;
+      display: none;
+      transform: translate(-50%, -50%);
+      z-index: 5;
+    }
+    #joystick::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 60px; height: 60px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.5);
+      transform: translate(calc(-50% + var(--dx, 0px)), calc(-50% + var(--dy, 0px)));
+    }
+
+    /* Mobile-friendly UI tweaks */
+    @media (max-width: 600px), (pointer: coarse) {
+      #overlay h1 { font-size: 38px; }
+      #overlay p  { font-size: 15px; padding: 0 16px; }
+      #win h1     { font-size: 40px; }
+      #score      { font-size: 17px; padding: 8px 14px; }
+      #flash      { font-size: 26px; }
+      .desktop-only { display: none !important; }
+    }
+    .mobile-only { display: none; }
+    @media (pointer: coarse) {
+      .mobile-only { display: block; }
+    }
   </style>
 </head>
 <body>
@@ -114,7 +153,8 @@
 <div id="overlay">
   <h1>🍎 Apple Picker</h1>
   <p>Walk around and collect all the apples!</p>
-  <p style="font-size:14px;color:#aaa;">WASD to move &nbsp;|&nbsp; Click &amp; drag to look around</p>
+  <p class="desktop-only" style="font-size:14px;color:#aaa;">WASD to move &nbsp;|&nbsp; Click &amp; drag to look around</p>
+  <p class="mobile-only" style="font-size:14px;color:#aaa;">Left side: drag to move &nbsp;|&nbsp; Right side: drag to look</p>
   <button id="startBtn">Click to Play</button>
 </div>
 
@@ -129,6 +169,7 @@
 </div>
 <div id="crosshair"></div>
 <div id="flash">+1 🍎</div>
+<div id="joystick"></div>
 
 <script>
 // Wire up button immediately so it always responds, even if Three.js fails to load.
@@ -283,13 +324,15 @@ function spawnApples() {
   }
 }
 
-// ── Look (mouse drag) ──────────────────────────────────────────────────────
+// ── Look + Touch controls ──────────────────────────────────────────────────
 var yaw   = 0;
 var pitch = 0;
+var SENS_MOUSE = 0.003;
+var SENS_TOUCH = 0.005;
+
+// Mouse drag for desktop
 var dragging = false;
 var lastMX = 0, lastMY = 0;
-var SENS = 0.003;
-
 renderer.domElement.addEventListener('mousedown', function(e) {
   if (!gameActive) return;
   dragging = true;
@@ -299,12 +342,86 @@ renderer.domElement.addEventListener('mousedown', function(e) {
 window.addEventListener('mouseup', function() { dragging = false; });
 window.addEventListener('mousemove', function(e) {
   if (!dragging || !gameActive) return;
-  yaw   -= (e.clientX - lastMX) * SENS;
-  pitch -= (e.clientY - lastMY) * SENS;
+  yaw   -= (e.clientX - lastMX) * SENS_MOUSE;
+  pitch -= (e.clientY - lastMY) * SENS_MOUSE;
   pitch  = Math.max(-1.0, Math.min(1.0, pitch));
   lastMX = e.clientX;
   lastMY = e.clientY;
 });
+
+// Touch: left half = virtual joystick (move), right half = drag (look)
+var joystickEl  = document.getElementById('joystick');
+var moveTouchId = null;
+var lookTouchId = null;
+var moveOriginX = 0, moveOriginY = 0;
+var lookLastX   = 0, lookLastY = 0;
+var touchInputX = 0, touchInputY = 0; // -1..1 normalized joystick output
+var JOY_RADIUS  = 60;
+
+function onTouchStart(e) {
+  if (!gameActive) return;
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    var leftHalf = t.clientX < window.innerWidth / 2;
+    if (leftHalf && moveTouchId === null) {
+      moveTouchId = t.identifier;
+      moveOriginX = t.clientX;
+      moveOriginY = t.clientY;
+      joystickEl.style.left = moveOriginX + 'px';
+      joystickEl.style.top  = moveOriginY + 'px';
+      joystickEl.style.setProperty('--dx', '0px');
+      joystickEl.style.setProperty('--dy', '0px');
+      joystickEl.style.display = 'block';
+    } else if (!leftHalf && lookTouchId === null) {
+      lookTouchId = t.identifier;
+      lookLastX = t.clientX;
+      lookLastY = t.clientY;
+    }
+  }
+  e.preventDefault();
+}
+
+function onTouchMove(e) {
+  if (!gameActive) return;
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    if (t.identifier === moveTouchId) {
+      var dx = t.clientX - moveOriginX;
+      var dy = t.clientY - moveOriginY;
+      var len = Math.sqrt(dx*dx + dy*dy);
+      if (len > JOY_RADIUS) { dx = dx / len * JOY_RADIUS; dy = dy / len * JOY_RADIUS; }
+      touchInputX = dx / JOY_RADIUS;
+      touchInputY = dy / JOY_RADIUS;
+      joystickEl.style.setProperty('--dx', dx + 'px');
+      joystickEl.style.setProperty('--dy', dy + 'px');
+    } else if (t.identifier === lookTouchId) {
+      yaw   -= (t.clientX - lookLastX) * SENS_TOUCH;
+      pitch -= (t.clientY - lookLastY) * SENS_TOUCH;
+      pitch  = Math.max(-1.0, Math.min(1.0, pitch));
+      lookLastX = t.clientX;
+      lookLastY = t.clientY;
+    }
+  }
+  e.preventDefault();
+}
+
+function onTouchEnd(e) {
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    if (t.identifier === moveTouchId) {
+      moveTouchId = null;
+      touchInputX = touchInputY = 0;
+      joystickEl.style.display = 'none';
+    } else if (t.identifier === lookTouchId) {
+      lookTouchId = null;
+    }
+  }
+}
+
+renderer.domElement.addEventListener('touchstart',  onTouchStart, { passive: false });
+renderer.domElement.addEventListener('touchmove',   onTouchMove,  { passive: false });
+window.addEventListener('touchend',    onTouchEnd);
+window.addEventListener('touchcancel', onTouchEnd);
 
 function applyCamera() {
   var qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
@@ -323,6 +440,12 @@ var velX = 0, velZ = 0;
 function movePlayer(dt) {
   var fw = (keys['KeyW']||keys['ArrowUp']   ? 1:0) - (keys['KeyS']||keys['ArrowDown'] ? 1:0);
   var rt = (keys['KeyD']||keys['ArrowRight']? 1:0) - (keys['KeyA']||keys['ArrowLeft'] ? 1:0);
+
+  // Mix in joystick input (touchInputY is positive when finger moves down → backward)
+  if (touchInputX !== 0 || touchInputY !== 0) {
+    fw += -touchInputY;
+    rt +=  touchInputX;
+  }
 
   // Forward (camera looks down -Z by default, rotated by yaw around Y):
   //   forward = (-sin(yaw), 0, -cos(yaw))
