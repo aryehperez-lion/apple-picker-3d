@@ -157,7 +157,7 @@ window.addEventListener('error', function (e) {
 });
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"
         onerror="document.getElementById('overlay').innerHTML='<h1 style=\'color:#ff4444\'>⚠️ Three.js CDN blocked</h1><p>Your network blocked cdn.jsdelivr.net. Try a different network or browser.</p>'"></script>
 <script>
 (function () {
@@ -324,11 +324,15 @@ function movePlayer(dt) {
   var fw = (keys['KeyW']||keys['ArrowUp']   ? 1:0) - (keys['KeyS']||keys['ArrowDown'] ? 1:0);
   var rt = (keys['KeyD']||keys['ArrowRight']? 1:0) - (keys['KeyA']||keys['ArrowLeft'] ? 1:0);
 
+  // Forward (camera looks down -Z by default, rotated by yaw around Y):
+  //   forward = (-sin(yaw), 0, -cos(yaw))
+  // Right (perpendicular to forward, horizontal):
+  //   right   = ( cos(yaw), 0, -sin(yaw))
   var sinY = Math.sin(yaw);
   var cosY = Math.cos(yaw);
 
-  var moveX = rt * cosY - fw * (-sinY);
-  var moveZ = rt * (-sinY) + fw * (-cosY);
+  var moveX = rt * cosY  - fw * sinY;
+  var moveZ = -rt * sinY - fw * cosY;
 
   var len = Math.sqrt(moveX*moveX + moveZ*moveZ);
   if (len > 0) { moveX /= len; moveZ /= len; }
