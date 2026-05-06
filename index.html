@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apple Picker 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: sans-serif; }
+    canvas { display: block; }
+
+    #hud {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      display: flex;
+      justify-content: space-between;
+      padding: 16px 24px;
+      pointer-events: none;
+    }
+    #score {
+      background: rgba(0,0,0,0.5);
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    #score span { color: #ff6644; }
+
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; height: 20px;
+      pointer-events: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.85);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.78);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      gap: 14px;
+      z-index: 10;
+    }
+    #overlay h1 { font-size: 52px; color: #ff4444; text-shadow: 0 0 24px #ff4444; }
+    #overlay p  { font-size: 17px; color: #ccc; text-align: center; }
+    #overlay button {
+      margin-top: 10px;
+      padding: 14px 40px;
+      font-size: 20px;
+      border: none;
+      border-radius: 10px;
+      background: #ff4444;
+      color: #fff;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #overlay button:hover { background: #ff6666; }
+
+    #win {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      gap: 16px;
+      z-index: 10;
+    }
+    #win h1 { font-size: 52px; color: #ffcc00; text-shadow: 0 0 30px #ffcc00; }
+    #win p  { font-size: 22px; color: #ccc; }
+    #win button {
+      padding: 14px 36px;
+      font-size: 20px;
+      border: none;
+      border-radius: 10px;
+      background: #ffcc00;
+      color: #000;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #win button:hover { background: #ffe066; }
+
+    #flash {
+      position: absolute;
+      top: 40%; left: 50%;
+      transform: translateX(-50%);
+      color: #ff4444;
+      font-size: 30px;
+      font-weight: bold;
+      pointer-events: none;
+      opacity: 0;
+      text-shadow: 0 0 10px #ff4444;
+      transition: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>🍎 Apple Picker</h1>
+  <p>Walk around and collect all the apples!</p>
+  <p style="font-size:14px;color:#aaa;">WASD to move &nbsp;|&nbsp; Click &amp; drag to look around</p>
+  <button id="startBtn">Click to Play</button>
+</div>
+
+<div id="win">
+  <h1>🎉 You Win!</h1>
+  <p id="winMsg"></p>
+  <button id="restartBtn">Play Again</button>
+</div>
+
+<div id="hud">
+  <div id="score">🍎 <span id="scoreNum">0</span> / <span id="totalNum">15</span></div>
+</div>
+<div id="crosshair"></div>
+<div id="flash">+1 🍎</div>
+
+<script>
+// Wire up button immediately so it always responds, even if Three.js fails to load.
+document.getElementById('startBtn').addEventListener('click', function () {
+  if (window.__startGame) {
+    window.__startGame();
+  } else {
+    document.getElementById('overlay').innerHTML =
+      '<h1 style="color:#ff4444">⚠️ Three.js failed to load</h1>' +
+      '<p>Check your internet connection — the game loads Three.js from a CDN.</p>' +
+      '<p style="font-size:13px;color:#888">Open the browser console (F12) for details.</p>';
+  }
+});
+
+// Show any script errors visibly so we can see what's wrong.
+window.addEventListener('error', function (e) {
+  var ov = document.getElementById('overlay');
+  if (ov) {
+    ov.style.display = 'flex';
+    ov.innerHTML =
+      '<h1 style="color:#ff4444">⚠️ Error</h1>' +
+      '<p style="font-family:monospace;font-size:14px;max-width:80%;text-align:center">' +
+      (e.message || 'Unknown error') + '</p>' +
+      '<p style="font-size:12px;color:#888">' + (e.filename || '') + ':' + (e.lineno || '') + '</p>';
+  }
+});
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"
+        onerror="document.getElementById('overlay').innerHTML='<h1 style=\'color:#ff4444\'>⚠️ Three.js CDN blocked</h1><p>Your network blocked cdn.jsdelivr.net. Try a different network or browser.</p>'"></script>
+<script>
+(function () {
+
+if (typeof THREE === 'undefined') {
+  document.getElementById('overlay').innerHTML =
+    '<h1 style="color:#ff4444">⚠️ Three.js not loaded</h1>' +
+    '<p>The CDN script did not load. Check the browser console (F12).</p>';
+  return;
+}
+
+// ── Scene ──────────────────────────────────────────────────────────────────
+var scene    = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 20, 60);
+
+var camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 1.7, 0);
+
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', function () {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── Lighting ───────────────────────────────────────────────────────────────
+var sun = new THREE.DirectionalLight(0xfff5e0, 2);
+sun.position.set(10, 20, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = sun.shadow.camera.bottom = -40;
+sun.shadow.camera.right = sun.shadow.camera.top = 40;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xadd8e6, 0.9));
+
+// ── Ground ─────────────────────────────────────────────────────────────────
+var ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80, 80),
+  new THREE.MeshLambertMaterial({ color: 0x4a7c40 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+var grid = new THREE.GridHelper(80, 40, 0x3a6030, 0x3a6030);
+grid.position.y = 0.01;
+grid.material.transparent = true;
+grid.material.opacity = 0.15;
+scene.add(grid);
+
+// ── Trees ──────────────────────────────────────────────────────────────────
+function makeTree(x, z) {
+  var g = new THREE.Group();
+  var trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, 0.2, 1.5, 8),
+    new THREE.MeshLambertMaterial({ color: 0x8b5e3c })
+  );
+  trunk.position.y = 0.75;
+  trunk.castShadow = true;
+  g.add(trunk);
+  [{r:1.4,h:1.5,y:1.8},{r:1.1,h:1.3,y:2.9},{r:0.7,h:1.1,y:3.8}].forEach(function(l) {
+    var f = new THREE.Mesh(
+      new THREE.ConeGeometry(l.r, l.h, 10),
+      new THREE.MeshLambertMaterial({ color: 0x2d6a2d })
+    );
+    f.position.y = l.y;
+    f.castShadow = true;
+    g.add(f);
+  });
+  g.position.set(x, 0, z);
+  scene.add(g);
+}
+
+[[-8,-8],[8,-8],[-8,8],[8,8],[-15,-5],[15,-5],[-5,-15],[5,15],
+ [-12,12],[12,12],[-12,-12],[12,-12],[-20,0],[20,0],[0,-20],[0,20],
+ [-18,10],[18,-10],[-10,18],[10,-18]].forEach(function(p){ makeTree(p[0],p[1]); });
+
+// ── Apples ─────────────────────────────────────────────────────────────────
+var APPLE_COUNT   = 15;
+var PICK_DISTANCE = 1.8;
+var apples        = [];
+
+var appleMat = new THREE.MeshLambertMaterial({ color: 0xe8221a });
+var stemMat  = new THREE.MeshLambertMaterial({ color: 0x4a2e0a });
+var leafMat  = new THREE.MeshLambertMaterial({ color: 0x2d8a2d });
+
+function makeApple(x, z) {
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16), appleMat);
+  body.castShadow = true;
+  g.add(body);
+  var stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 6), stemMat);
+  stem.position.y = 0.28;
+  g.add(stem);
+  var leaf = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), leafMat);
+  leaf.scale.set(1.4, 0.5, 0.8);
+  leaf.position.set(0.1, 0.36, 0);
+  g.add(leaf);
+  g.position.set(x, 0.32, z);
+  scene.add(g);
+  return { group: g, collected: false, bobOffset: Math.random() * Math.PI * 2 };
+}
+
+function randomPos() {
+  var x, z;
+  do { x = (Math.random()-0.5)*30; z = (Math.random()-0.5)*30; }
+  while (Math.sqrt(x*x+z*z) < 4);
+  return [x, z];
+}
+
+function spawnApples() {
+  apples.forEach(function(a){ scene.remove(a.group); });
+  apples.length = 0;
+  for (var i = 0; i < APPLE_COUNT; i++) {
+    var p = randomPos();
+    apples.push(makeApple(p[0], p[1]));
+  }
+}
+
+// ── Look (mouse drag) ──────────────────────────────────────────────────────
+var yaw   = 0;
+var pitch = 0;
+var dragging = false;
+var lastMX = 0, lastMY = 0;
+var SENS = 0.003;
+
+renderer.domElement.addEventListener('mousedown', function(e) {
+  if (!gameActive) return;
+  dragging = true;
+  lastMX = e.clientX;
+  lastMY = e.clientY;
+});
+window.addEventListener('mouseup', function() { dragging = false; });
+window.addEventListener('mousemove', function(e) {
+  if (!dragging || !gameActive) return;
+  yaw   -= (e.clientX - lastMX) * SENS;
+  pitch -= (e.clientY - lastMY) * SENS;
+  pitch  = Math.max(-1.0, Math.min(1.0, pitch));
+  lastMX = e.clientX;
+  lastMY = e.clientY;
+});
+
+function applyCamera() {
+  var qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
+  var qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), pitch);
+  camera.quaternion.copy(qY).multiply(qX);
+}
+
+// ── Movement ───────────────────────────────────────────────────────────────
+var keys = {};
+window.addEventListener('keydown', function(e){ keys[e.code] = true;  e.preventDefault(); });
+window.addEventListener('keyup',   function(e){ keys[e.code] = false; });
+
+var SPEED = 5;
+var velX = 0, velZ = 0;
+
+function movePlayer(dt) {
+  var fw = (keys['KeyW']||keys['ArrowUp']   ? 1:0) - (keys['KeyS']||keys['ArrowDown'] ? 1:0);
+  var rt = (keys['KeyD']||keys['ArrowRight']? 1:0) - (keys['KeyA']||keys['ArrowLeft'] ? 1:0);
+
+  var sinY = Math.sin(yaw);
+  var cosY = Math.cos(yaw);
+
+  var moveX = rt * cosY - fw * (-sinY);
+  var moveZ = rt * (-sinY) + fw * (-cosY);
+
+  var len = Math.sqrt(moveX*moveX + moveZ*moveZ);
+  if (len > 0) { moveX /= len; moveZ /= len; }
+
+  velX = moveX * SPEED;
+  velZ = moveZ * SPEED;
+
+  camera.position.x += velX * dt;
+  camera.position.z += velZ * dt;
+  camera.position.y = 1.7;
+
+  var B = 37;
+  camera.position.x = Math.max(-B, Math.min(B, camera.position.x));
+  camera.position.z = Math.max(-B, Math.min(B, camera.position.z));
+}
+
+// ── Pickup ─────────────────────────────────────────────────────────────────
+function checkPickups() {
+  var px = camera.position.x, pz = camera.position.z;
+  apples.forEach(function(apple) {
+    if (apple.collected) return;
+    var dx = px - apple.group.position.x;
+    var dz = pz - apple.group.position.z;
+    if (Math.sqrt(dx*dx + dz*dz) < PICK_DISTANCE) {
+      apple.collected = true;
+      scene.remove(apple.group);
+      score++;
+      updateScore();
+      showFlash();
+      if (score === APPLE_COUNT) setTimeout(showWin, 400);
+    }
+  });
+}
+
+// ── UI ─────────────────────────────────────────────────────────────────────
+var scoreEl   = document.getElementById('scoreNum');
+var totalEl   = document.getElementById('totalNum');
+var overlay   = document.getElementById('overlay');
+var winScreen = document.getElementById('win');
+var winMsg    = document.getElementById('winMsg');
+var flashEl   = document.getElementById('flash');
+
+var score      = 0;
+var gameActive = false;
+var flashTimer = 0;
+var startTime  = 0;
+
+function updateScore() { scoreEl.textContent = score; }
+
+function showFlash() {
+  flashTimer = 1.0;
+  flashEl.style.opacity = '1';
+  flashEl.style.top = '40%';
+}
+
+function showWin() {
+  gameActive = false;
+  var elapsed = Math.round((Date.now() - startTime) / 1000);
+  winMsg.textContent = 'You collected all ' + APPLE_COUNT + ' apples in ' + elapsed + 's!';
+  winScreen.style.display = 'flex';
+}
+
+window.__startGame = function() {
+  overlay.style.display = 'none';
+  gameActive = true;
+  startTime  = Date.now();
+};
+
+document.getElementById('restartBtn').addEventListener('click', function() {
+  winScreen.style.display = 'none';
+  score = 0;
+  updateScore();
+  spawnApples();
+  camera.position.set(0, 1.7, 0);
+  yaw = 0; pitch = 0;
+  gameActive = true;
+  startTime  = Date.now();
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+spawnApples();
+totalEl.textContent = APPLE_COUNT;
+updateScore();
+
+// ── Loop ───────────────────────────────────────────────────────────────────
+var lastTime = 0;
+
+function animate(ts) {
+  requestAnimationFrame(animate);
+  var dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  var t = ts / 1000;
+
+  if (gameActive) {
+    movePlayer(dt);
+    checkPickups();
+  }
+  applyCamera();
+
+  apples.forEach(function(apple) {
+    if (!apple.collected) {
+      apple.group.position.y = 0.32 + Math.sin(t*2 + apple.bobOffset) * 0.08;
+      apple.group.rotation.y = t * 0.8 + apple.bobOffset;
+    }
+  });
+
+  if (flashTimer > 0) {
+    flashTimer -= dt;
+    flashEl.style.opacity = Math.max(0, flashTimer).toFixed(2);
+    flashEl.style.top = (40 - (1 - flashTimer) * 8) + '%';
+    if (flashTimer <= 0) flashEl.style.opacity = '0';
+  }
+
+  renderer.render(scene, camera);
+}
+
+requestAnimationFrame(animate);
+
+})();
+</script>
+</body>
+</html>
