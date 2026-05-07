@@ -161,7 +161,10 @@
 <div id="win">
   <h1>🎉 You Win!</h1>
   <p id="winMsg"></p>
-  <button id="restartBtn">Play Again</button>
+  <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+    <button id="restartBtn">Play Again</button>
+    <button id="homeBtn" style="background:#666;color:#fff;">Go to Home Screen</button>
+  </div>
 </div>
 
 <div id="hud">
@@ -558,15 +561,26 @@ window.__startGame = function() {
   startTime  = Date.now();
 };
 
-document.getElementById('restartBtn').addEventListener('click', function() {
-  winScreen.style.display = 'none';
+function resetWorld() {
   score = 0;
   updateScore();
   spawnApples();
   camera.position.set(0, 1.7, 0);
   yaw = 0; pitch = 0;
+}
+
+document.getElementById('restartBtn').addEventListener('click', function() {
+  winScreen.style.display = 'none';
+  resetWorld();
   gameActive = true;
   startTime  = Date.now();
+});
+
+document.getElementById('homeBtn').addEventListener('click', function() {
+  winScreen.style.display = 'none';
+  resetWorld();
+  gameActive = false;
+  overlay.style.display = 'flex';
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
