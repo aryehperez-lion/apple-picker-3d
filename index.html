@@ -167,6 +167,12 @@
   </div>
 </div>
 
+<div id="home" style="position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; z-index:10;">
+  <h1 style="font-size:52px; color:#ff4444; text-shadow:0 0 24px #ff4444;">🍎 Home</h1>
+  <p style="font-size:17px; color:#ccc;">Ready for another round?</p>
+  <button id="homePlayBtn" style="margin-top:10px; padding:14px 40px; font-size:20px; border:none; border-radius:10px; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Click to Play</button>
+</div>
+
 <div id="hud">
   <div id="score">🍎 <span id="scoreNum">0</span> / <span id="totalNum">15</span></div>
 </div>
@@ -576,11 +582,19 @@ document.getElementById('restartBtn').addEventListener('click', function() {
   startTime  = Date.now();
 });
 
+var homeScreen = document.getElementById('home');
+
 document.getElementById('homeBtn').addEventListener('click', function() {
   winScreen.style.display = 'none';
   resetWorld();
   gameActive = false;
-  overlay.style.display = 'flex';
+  homeScreen.style.display = 'flex';
+});
+
+document.getElementById('homePlayBtn').addEventListener('click', function() {
+  homeScreen.style.display = 'none';
+  gameActive = true;
+  startTime  = Date.now();
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
