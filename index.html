@@ -278,9 +278,30 @@ function makeTree(x, z) {
   scene.add(g);
 }
 
-[[-8,-8],[8,-8],[-8,8],[8,8],[-15,-5],[15,-5],[-5,-15],[5,15],
- [-12,12],[12,12],[-12,-12],[12,-12],[-20,0],[20,0],[0,-20],[0,20],
- [-18,10],[18,-10],[-10,18],[10,-18]].forEach(function(p){ makeTree(p[0],p[1]); });
+var treePositions = [
+  [-8,-8],[8,-8],[-8,8],[8,8],[-15,-5],[15,-5],[-5,-15],[5,15],
+  [-12,12],[12,12],[-12,-12],[12,-12],[-20,0],[20,0],[0,-20],[0,20],
+  [-18,10],[18,-10],[-10,18],[10,-18]
+];
+treePositions.forEach(function(p){ makeTree(p[0], p[1]); });
+
+var TREE_RADIUS = 0.9; // trunk + player buffer
+
+function resolveTreeCollisions(x, z) {
+  for (var i = 0; i < treePositions.length; i++) {
+    var tx = treePositions[i][0];
+    var tz = treePositions[i][1];
+    var dx = x - tx;
+    var dz = z - tz;
+    var dist = Math.sqrt(dx*dx + dz*dz);
+    if (dist < TREE_RADIUS) {
+      if (dist < 0.0001) { dx = 1; dz = 0; dist = 1; } // dead-center: shove +x
+      x = tx + (dx / dist) * TREE_RADIUS;
+      z = tz + (dz / dist) * TREE_RADIUS;
+    }
+  }
+  return [x, z];
+}
 
 // ── Apples ─────────────────────────────────────────────────────────────────
 var APPLE_COUNT   = 15;
@@ -309,9 +330,18 @@ function makeApple(x, z) {
 }
 
 function randomPos() {
-  var x, z;
-  do { x = (Math.random()-0.5)*30; z = (Math.random()-0.5)*30; }
-  while (Math.sqrt(x*x+z*z) < 4);
+  for (var tries = 0; tries < 50; tries++) {
+    var x = (Math.random()-0.5)*30;
+    var z = (Math.random()-0.5)*30;
+    if (Math.sqrt(x*x+z*z) < 4) continue;            // not too close to spawn
+    var blocked = false;
+    for (var i = 0; i < treePositions.length; i++) {
+      var dx = x - treePositions[i][0];
+      var dz = z - treePositions[i][1];
+      if (dx*dx + dz*dz < 1.5*1.5) { blocked = true; break; }
+    }
+    if (!blocked) return [x, z];
+  }
   return [x, z];
 }
 
@@ -463,8 +493,12 @@ function movePlayer(dt) {
   velX = moveX * SPEED;
   velZ = moveZ * SPEED;
 
-  camera.position.x += velX * dt;
-  camera.position.z += velZ * dt;
+  var nx = camera.position.x + velX * dt;
+  var nz = camera.position.z + velZ * dt;
+
+  var resolved = resolveTreeCollisions(nx, nz);
+  camera.position.x = resolved[0];
+  camera.position.z = resolved[1];
   camera.position.y = 1.7;
 
   var B = 37;
