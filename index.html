@@ -492,8 +492,19 @@ function applyCamera() {
 
 // ── Movement ───────────────────────────────────────────────────────────────
 var keys = {};
-window.addEventListener('keydown', function(e){ keys[e.code] = true;  e.preventDefault(); });
-window.addEventListener('keyup',   function(e){ keys[e.code] = false; });
+function isTypingTarget(e) {
+  var t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+}
+window.addEventListener('keydown', function(e){
+  if (isTypingTarget(e)) return;
+  keys[e.code] = true;
+  e.preventDefault();
+});
+window.addEventListener('keyup', function(e){
+  if (isTypingTarget(e)) return;
+  keys[e.code] = false;
+});
 
 var SPEED = 5;
 var velX = 0, velZ = 0;
