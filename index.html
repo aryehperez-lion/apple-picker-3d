@@ -169,6 +169,9 @@
 
 <div id="home" style="position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; z-index:10;">
   <h1 style="font-size:52px; color:#ff4444; text-shadow:0 0 24px #ff4444;">🍎 Home</h1>
+  <div style="font-size:22px; color:#ffcc00; background:rgba(255,255,255,0.06); padding:14px 28px; border-radius:12px; border:1px solid rgba(255,204,0,0.4);">
+    Total Apples Collected: 🍎 <span id="totalApples" style="font-weight:bold;">0</span>
+  </div>
   <p style="font-size:17px; color:#ccc;">Ready for another round?</p>
   <button id="homePlayBtn" style="margin-top:10px; padding:14px 40px; font-size:20px; border:none; border-radius:10px; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Click to Play</button>
 </div>
@@ -526,6 +529,8 @@ function checkPickups() {
       apple.collected = true;
       scene.remove(apple.group);
       score++;
+      lifetimeApples++;
+      saveLifetimeApples();
       updateScore();
       showFlash();
       if (score === APPLE_COUNT) setTimeout(showWin, 400);
@@ -545,6 +550,17 @@ var score      = 0;
 var gameActive = false;
 var flashTimer = 0;
 var startTime  = 0;
+
+var LIFETIME_KEY = 'applePicker.lifetimeApples';
+var lifetimeApples = 0;
+try { lifetimeApples = parseInt(localStorage.getItem(LIFETIME_KEY), 10) || 0; } catch (e) {}
+
+var totalApplesEl = document.getElementById('totalApples');
+function saveLifetimeApples() {
+  try { localStorage.setItem(LIFETIME_KEY, String(lifetimeApples)); } catch (e) {}
+  if (totalApplesEl) totalApplesEl.textContent = lifetimeApples;
+}
+saveLifetimeApples();
 
 function updateScore() { scoreEl.textContent = score; }
 
