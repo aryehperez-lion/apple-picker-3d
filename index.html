@@ -150,8 +150,26 @@
 </head>
 <body>
 
-<div id="overlay">
+<div id="auth" style="position:absolute; inset:0; background:rgba(0,0,0,0.92); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; z-index:20;">
+  <h1 style="font-size:48px; color:#ff4444; text-shadow:0 0 24px #ff4444;">🍎 Apple Picker</h1>
+  <div style="display:flex; gap:0; border-radius:10px; overflow:hidden;">
+    <button id="tabLogin"  style="padding:10px 24px; font-size:16px; border:none; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Log In</button>
+    <button id="tabSignup" style="padding:10px 24px; font-size:16px; border:none; background:#444;    color:#fff; cursor:pointer; font-weight:bold;">Sign Up</button>
+  </div>
+  <input id="authUser" placeholder="Username" autocomplete="off"
+         style="padding:12px 16px; font-size:16px; width:260px; border-radius:8px; border:1px solid #555; background:#222; color:#fff;" />
+  <input id="authPass" placeholder="Password" type="password" autocomplete="off"
+         style="padding:12px 16px; font-size:16px; width:260px; border-radius:8px; border:1px solid #555; background:#222; color:#fff;" />
+  <p id="authMsg" style="font-size:14px; color:#ff8888; min-height:18px;"></p>
+  <button id="authSubmit" style="padding:14px 40px; font-size:20px; border:none; border-radius:10px; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Log In</button>
+  <p style="font-size:12px; color:#888; max-width:300px; text-align:center;">
+    Local accounts only — your data is stored in this browser. Don't use a real password.
+  </p>
+</div>
+
+<div id="overlay" style="display:none;">
   <h1>🍎 Apple Picker</h1>
+  <p id="welcomeMsg" style="color:#ffcc00; font-size:18px;"></p>
   <p>Walk around and collect all the apples!</p>
   <p class="desktop-only" style="font-size:14px;color:#aaa;">WASD to move &nbsp;|&nbsp; Click &amp; drag to look around</p>
   <p class="mobile-only" style="font-size:14px;color:#aaa;">Left side: drag to move &nbsp;|&nbsp; Right side: drag to look</p>
@@ -172,8 +190,9 @@
   <div style="font-size:22px; color:#ffcc00; background:rgba(255,255,255,0.06); padding:14px 28px; border-radius:12px; border:1px solid rgba(255,204,0,0.4);">
     Total Apples Collected: 🍎 <span id="totalApples" style="font-weight:bold;">0</span>
   </div>
-  <p style="font-size:17px; color:#ccc;">Ready for another round?</p>
+  <p style="font-size:17px; color:#ccc;">Ready for another round, <span id="homeUser">player</span>?</p>
   <button id="homePlayBtn" style="margin-top:10px; padding:14px 40px; font-size:20px; border:none; border-radius:10px; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Click to Play</button>
+  <button id="logoutBtn" style="margin-top:4px; padding:8px 22px; font-size:14px; border:none; border-radius:8px; background:transparent; color:#aaa; cursor:pointer; text-decoration:underline;">Log out</button>
 </div>
 
 <div id="hud">
@@ -551,16 +570,123 @@ var gameActive = false;
 var flashTimer = 0;
 var startTime  = 0;
 
-var LIFETIME_KEY = 'applePicker.lifetimeApples';
-var lifetimeApples = 0;
-try { lifetimeApples = parseInt(localStorage.getItem(LIFETIME_KEY), 10) || 0; } catch (e) {}
+// ── Accounts (local-only) ──────────────────────────────────────────────────
+var USERS_KEY        = 'applePicker.users';
+var CURRENT_USER_KEY = 'applePicker.currentUser';
+var lifetimeApples   = 0;
+var currentUser      = null;
+
+function loadUsers()      { try { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); } catch(e) { return {}; } }
+function saveUsers(u)     { try { localStorage.setItem(USERS_KEY, JSON.stringify(u)); } catch(e) {} }
+function setCurrentUser(n){ try { localStorage.setItem(CURRENT_USER_KEY, n || ''); } catch(e) {} currentUser = n || null; }
+function getCurrentUser() { try { return localStorage.getItem(CURRENT_USER_KEY) || null; } catch(e) { return null; } }
+
+async function hashPassword(p) {
+  if (!window.crypto || !crypto.subtle) {
+    // very old browser — fall back to a weak hash so the app still works
+    var h = 0;
+    for (var i = 0; i < p.length; i++) { h = ((h<<5)-h + p.charCodeAt(i))|0; }
+    return 'fallback:' + h;
+  }
+  var buf = new TextEncoder().encode(p);
+  var d = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
 
 var totalApplesEl = document.getElementById('totalApples');
+var homeUserEl    = document.getElementById('homeUser');
+var welcomeEl     = document.getElementById('welcomeMsg');
+
 function saveLifetimeApples() {
-  try { localStorage.setItem(LIFETIME_KEY, String(lifetimeApples)); } catch (e) {}
+  if (currentUser) {
+    var users = loadUsers();
+    if (users[currentUser]) {
+      users[currentUser].lifetimeApples = lifetimeApples;
+      saveUsers(users);
+    }
+  }
   if (totalApplesEl) totalApplesEl.textContent = lifetimeApples;
 }
-saveLifetimeApples();
+
+function applyUserToUI() {
+  if (homeUserEl) homeUserEl.textContent = currentUser || 'player';
+  if (welcomeEl)  welcomeEl.textContent  = currentUser ? ('Welcome back, ' + currentUser + '!') : '';
+  if (totalApplesEl) totalApplesEl.textContent = lifetimeApples;
+}
+
+// ── Auth screen logic ──────────────────────────────────────────────────────
+var authScreen = document.getElementById('auth');
+var authUser   = document.getElementById('authUser');
+var authPass   = document.getElementById('authPass');
+var authMsg    = document.getElementById('authMsg');
+var authSubmit = document.getElementById('authSubmit');
+var tabLogin   = document.getElementById('tabLogin');
+var tabSignup  = document.getElementById('tabSignup');
+var authMode   = 'login';
+
+function setMode(mode) {
+  authMode = mode;
+  authMsg.textContent = '';
+  if (mode === 'login') {
+    tabLogin.style.background = '#ff4444';
+    tabSignup.style.background = '#444';
+    authSubmit.textContent = 'Log In';
+  } else {
+    tabLogin.style.background = '#444';
+    tabSignup.style.background = '#ff4444';
+    authSubmit.textContent = 'Sign Up';
+  }
+}
+tabLogin.addEventListener('click',  function(){ setMode('login');  });
+tabSignup.addEventListener('click', function(){ setMode('signup'); });
+
+async function handleAuth() {
+  var u = (authUser.value || '').trim();
+  var p = authPass.value || '';
+  if (!u || !p)             { authMsg.textContent = 'Username and password required.'; return; }
+  if (u.length > 24)        { authMsg.textContent = 'Username too long (max 24).';     return; }
+  if (p.length < 4)         { authMsg.textContent = 'Password must be at least 4 chars.'; return; }
+
+  authSubmit.disabled = true;
+  var users = loadUsers();
+  var ph = await hashPassword(p);
+
+  if (authMode === 'signup') {
+    if (users[u]) { authMsg.textContent = 'That username is taken.'; authSubmit.disabled = false; return; }
+    users[u] = { passwordHash: ph, lifetimeApples: 0 };
+    saveUsers(users);
+  } else {
+    if (!users[u] || users[u].passwordHash !== ph) {
+      authMsg.textContent = 'Wrong username or password.';
+      authSubmit.disabled = false;
+      return;
+    }
+  }
+
+  setCurrentUser(u);
+  lifetimeApples = (users[u] && users[u].lifetimeApples) || 0;
+  applyUserToUI();
+  authPass.value = '';
+  authSubmit.disabled = false;
+  authScreen.style.display = 'none';
+  overlay.style.display = 'flex';
+}
+authSubmit.addEventListener('click', handleAuth);
+authPass.addEventListener('keydown', function(e){ if (e.key === 'Enter') handleAuth(); });
+authUser.addEventListener('keydown', function(e){ if (e.key === 'Enter') authPass.focus(); });
+
+// Auto-login if a previous session exists
+(function tryAutoLogin() {
+  var saved = getCurrentUser();
+  if (!saved) return;
+  var users = loadUsers();
+  if (!users[saved]) return;
+  currentUser = saved;
+  lifetimeApples = users[saved].lifetimeApples || 0;
+  applyUserToUI();
+  authScreen.style.display = 'none';
+  overlay.style.display = 'flex';
+})();
 
 function updateScore() { scoreEl.textContent = score; }
 
@@ -611,6 +737,18 @@ document.getElementById('homePlayBtn').addEventListener('click', function() {
   homeScreen.style.display = 'none';
   gameActive = true;
   startTime  = Date.now();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', function() {
+  setCurrentUser('');
+  lifetimeApples = 0;
+  homeScreen.style.display = 'none';
+  overlay.style.display = 'none';
+  authScreen.style.display = 'flex';
+  authUser.value = '';
+  authPass.value = '';
+  authMsg.textContent = '';
+  applyUserToUI();
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
