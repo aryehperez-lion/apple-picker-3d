@@ -197,10 +197,23 @@
 
 <div id="hud">
   <div id="score">🍎 <span id="scoreNum">0</span> / <span id="totalNum">15</span></div>
+  <div id="health" style="background:rgba(0,0,0,0.5); color:#fff; padding:10px 18px; border-radius:10px; font-size:20px; font-weight:bold;">
+    ❤️ <span id="healthNum">5</span> / 5
+  </div>
 </div>
 <div id="crosshair"></div>
 <div id="flash">+1 🍎</div>
+<div id="hurt" style="position:absolute; inset:0; background:radial-gradient(circle at center, transparent 50%, rgba(180,0,0,0.6) 100%); pointer-events:none; opacity:0; transition:opacity 0.2s;"></div>
 <div id="joystick"></div>
+
+<div id="gameover" style="position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; z-index:10;">
+  <h1 style="font-size:54px; color:#ff2222; text-shadow:0 0 28px #ff2222;">💀 You Died</h1>
+  <p id="gameoverMsg" style="font-size:20px; color:#ccc;"></p>
+  <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;">
+    <button id="retryBtn"   style="padding:14px 36px; font-size:20px; border:none; border-radius:10px; background:#ff4444; color:#fff; cursor:pointer; font-weight:bold;">Try Again</button>
+    <button id="goHomeBtn"  style="padding:14px 36px; font-size:20px; border:none; border-radius:10px; background:#666;    color:#fff; cursor:pointer; font-weight:bold;">Go to Home Screen</button>
+  </div>
+</div>
 
 <script>
 // Wire up button immediately so it always responds, even if Three.js fails to load.
@@ -342,6 +355,163 @@ var apples        = [];
 var appleMat = new THREE.MeshLambertMaterial({ color: 0xe8221a });
 var stemMat  = new THREE.MeshLambertMaterial({ color: 0x4a2e0a });
 var leafMat  = new THREE.MeshLambertMaterial({ color: 0x2d8a2d });
+
+// ── Trolls ─────────────────────────────────────────────────────────────────
+var trolls           = [];
+var trollSpawnTimer  = 0;
+var TROLL_SPAWN_INTERVAL = 4.5;   // seconds
+var TROLL_MAX        = 6;
+var TROLL_SPEED      = 1.8;
+var TROLL_ATTACK_RANGE = 1.4;
+var TROLL_ATTACK_COOLDOWN = 1.2;  // seconds between hits
+var TROLL_DAMAGE     = 0.5;
+var TROLL_EMERGE_TIME = 1.0;      // seconds to rise out of ground
+
+var trollSkinMat = new THREE.MeshLambertMaterial({ color: 0x4a6b3a });
+var trollDarkMat = new THREE.MeshLambertMaterial({ color: 0x2f4628 });
+var trollEyeMat  = new THREE.MeshBasicMaterial({ color: 0xffaa22 });
+var dirtMat      = new THREE.MeshLambertMaterial({ color: 0x5a3a20 });
+
+function makeTroll(x, z) {
+  var g = new THREE.Group();
+
+  var body = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 1.2, 12), trollSkinMat);
+  body.position.y = 0.6;
+  body.castShadow = true;
+  g.add(body);
+
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 12, 12), trollSkinMat);
+  head.position.y = 1.5;
+  head.castShadow = true;
+  g.add(head);
+
+  // angry brow
+  var brow = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.1), trollDarkMat);
+  brow.position.set(0, 1.62, 0.32);
+  g.add(brow);
+
+  // eyes
+  var eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), trollEyeMat);
+  eyeL.position.set(-0.13, 1.52, 0.34);
+  g.add(eyeL);
+  var eyeR = eyeL.clone();
+  eyeR.position.x = 0.13;
+  g.add(eyeR);
+
+  // arms
+  var armL = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.9, 8), trollSkinMat);
+  armL.position.set(-0.55, 0.85, 0);
+  armL.castShadow = true;
+  g.add(armL);
+  var armR = armL.clone();
+  armR.position.x = 0.55;
+  g.add(armR);
+
+  // dirt mound that hides the troll while it emerges
+  var mound = new THREE.Mesh(new THREE.ConeGeometry(0.9, 0.3, 12), dirtMat);
+  mound.position.y = 0.15;
+  mound.scale.y = 0.6;
+  mound.visible = true;
+  g.add(mound);
+
+  g.position.set(x, 0, z);
+  scene.add(g);
+
+  return {
+    group: g,
+    mound: mound,
+    armL: armL,
+    armR: armR,
+    state: 'emerging',     // 'emerging' | 'walking' | 'attacking' | 'dying'
+    timer: 0,
+    attackCd: 0,
+    yOffset: -1.6,         // start sunk into the ground
+    walkPhase: Math.random() * Math.PI * 2,
+  };
+}
+
+function spawnTroll() {
+  if (trolls.length >= TROLL_MAX) return;
+  var px = camera.position.x, pz = camera.position.z;
+  // pick a spot at distance 8-16 from player, away from trees
+  for (var tries = 0; tries < 30; tries++) {
+    var ang  = Math.random() * Math.PI * 2;
+    var dist = 8 + Math.random() * 8;
+    var x = px + Math.cos(ang) * dist;
+    var z = pz + Math.sin(ang) * dist;
+    if (Math.abs(x) > 36 || Math.abs(z) > 36) continue;
+    var nearTree = false;
+    for (var i = 0; i < treePositions.length; i++) {
+      var dx = x - treePositions[i][0];
+      var dz = z - treePositions[i][1];
+      if (dx*dx + dz*dz < 1.5*1.5) { nearTree = true; break; }
+    }
+    if (nearTree) continue;
+    trolls.push(makeTroll(x, z));
+    return;
+  }
+}
+
+function clearTrolls() {
+  trolls.forEach(function(t){ scene.remove(t.group); });
+  trolls.length = 0;
+}
+
+function updateTrolls(dt, t) {
+  trollSpawnTimer -= dt;
+  if (trollSpawnTimer <= 0) {
+    spawnTroll();
+    trollSpawnTimer = TROLL_SPAWN_INTERVAL;
+  }
+
+  for (var i = trolls.length - 1; i >= 0; i--) {
+    var tr = trolls[i];
+    tr.timer += dt;
+    if (tr.attackCd > 0) tr.attackCd -= dt;
+
+    if (tr.state === 'emerging') {
+      var k = Math.min(1, tr.timer / TROLL_EMERGE_TIME);
+      tr.yOffset = -1.6 * (1 - k);
+      tr.group.position.y = tr.yOffset;
+      tr.mound.visible = k < 0.95;
+      if (k >= 1) { tr.state = 'walking'; tr.timer = 0; tr.mound.visible = false; }
+      continue;
+    }
+
+    var dx = camera.position.x - tr.group.position.x;
+    var dz = camera.position.z - tr.group.position.z;
+    var dist = Math.sqrt(dx*dx + dz*dz);
+
+    // face the player
+    if (dist > 0.0001) tr.group.rotation.y = Math.atan2(dx, dz);
+
+    if (tr.state === 'walking') {
+      if (dist < TROLL_ATTACK_RANGE) {
+        tr.state = 'attacking';
+      } else {
+        var step = TROLL_SPEED * dt;
+        tr.group.position.x += (dx / dist) * step;
+        tr.group.position.z += (dz / dist) * step;
+        // simple walking arm swing
+        tr.walkPhase += dt * 6;
+        tr.armL.rotation.x =  Math.sin(tr.walkPhase) * 0.6;
+        tr.armR.rotation.x = -Math.sin(tr.walkPhase) * 0.6;
+      }
+    } else if (tr.state === 'attacking') {
+      // arm raise / smash animation
+      var sw = Math.sin(t * 8);
+      tr.armL.rotation.x = -1.2 + sw * 0.4;
+      tr.armR.rotation.x = -1.2 - sw * 0.4;
+
+      if (dist > TROLL_ATTACK_RANGE * 1.4) {
+        tr.state = 'walking';
+      } else if (tr.attackCd <= 0) {
+        damagePlayer(TROLL_DAMAGE);
+        tr.attackCd = TROLL_ATTACK_COOLDOWN;
+      }
+    }
+  }
+}
 
 function makeApple(x, z) {
   var g = new THREE.Group();
@@ -581,6 +751,34 @@ var gameActive = false;
 var flashTimer = 0;
 var startTime  = 0;
 
+// ── Health ─────────────────────────────────────────────────────────────────
+var MAX_HEALTH = 5;
+var health     = MAX_HEALTH;
+var hurtTimer  = 0;
+var healthEl   = document.getElementById('healthNum');
+var hurtEl     = document.getElementById('hurt');
+var gameoverEl = document.getElementById('gameover');
+var gameoverMsg= document.getElementById('gameoverMsg');
+
+function updateHealth() {
+  if (healthEl) healthEl.textContent = (Math.round(health * 10) / 10);
+}
+
+function damagePlayer(amount) {
+  if (!gameActive) return;
+  health = Math.max(0, health - amount);
+  updateHealth();
+  hurtTimer = 0.4;
+  if (hurtEl) hurtEl.style.opacity = '1';
+  if (health <= 0) showGameOver();
+}
+
+function showGameOver() {
+  gameActive = false;
+  gameoverMsg.textContent = 'You collected ' + score + ' apple' + (score === 1 ? '' : 's') + ' before the trolls got you.';
+  gameoverEl.style.display = 'flex';
+}
+
 // ── Accounts (local-only) ──────────────────────────────────────────────────
 var USERS_KEY        = 'applePicker.users';
 var CURRENT_USER_KEY = 'applePicker.currentUser';
@@ -592,16 +790,25 @@ function saveUsers(u)     { try { localStorage.setItem(USERS_KEY, JSON.stringify
 function setCurrentUser(n){ try { localStorage.setItem(CURRENT_USER_KEY, n || ''); } catch(e) {} currentUser = n || null; }
 function getCurrentUser() { try { return localStorage.getItem(CURRENT_USER_KEY) || null; } catch(e) { return null; } }
 
-async function hashPassword(p) {
-  if (!window.crypto || !crypto.subtle) {
-    // very old browser — fall back to a weak hash so the app still works
-    var h = 0;
-    for (var i = 0; i < p.length; i++) { h = ((h<<5)-h + p.charCodeAt(i))|0; }
-    return 'fallback:' + h;
+function fallbackHash(p) {
+  // FNV-1a 32-bit. Local-only "auth" — adequate for keeping plaintext out of storage.
+  var h = 0x811c9dc5;
+  for (var i = 0; i < p.length; i++) {
+    h ^= p.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
   }
-  var buf = new TextEncoder().encode(p);
-  var d = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+  return 'fnv:' + h.toString(16);
+}
+
+async function hashPassword(p) {
+  try {
+    if (window.crypto && crypto.subtle && typeof crypto.subtle.digest === 'function') {
+      var buf = new TextEncoder().encode(p);
+      var d = await crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+    }
+  } catch (e) { /* fall through to fnv */ }
+  return fallbackHash(p);
 }
 
 var totalApplesEl = document.getElementById('totalApples');
@@ -652,35 +859,39 @@ tabLogin.addEventListener('click',  function(){ setMode('login');  });
 tabSignup.addEventListener('click', function(){ setMode('signup'); });
 
 async function handleAuth() {
+  authMsg.textContent = '';
   var u = (authUser.value || '').trim();
   var p = authPass.value || '';
-  if (!u || !p)             { authMsg.textContent = 'Username and password required.'; return; }
-  if (u.length > 24)        { authMsg.textContent = 'Username too long (max 24).';     return; }
-  if (p.length < 4)         { authMsg.textContent = 'Password must be at least 4 chars.'; return; }
+  if (!u || !p)      { authMsg.textContent = 'Username and password required.'; return; }
+  if (u.length > 24) { authMsg.textContent = 'Username too long (max 24).';     return; }
+  if (p.length < 4)  { authMsg.textContent = 'Password must be at least 4 chars.'; return; }
 
   authSubmit.disabled = true;
-  var users = loadUsers();
-  var ph = await hashPassword(p);
+  try {
+    var users = loadUsers();
+    var ph = await hashPassword(p);
 
-  if (authMode === 'signup') {
-    if (users[u]) { authMsg.textContent = 'That username is taken.'; authSubmit.disabled = false; return; }
-    users[u] = { passwordHash: ph, lifetimeApples: 0 };
-    saveUsers(users);
-  } else {
-    if (!users[u] || users[u].passwordHash !== ph) {
-      authMsg.textContent = 'Wrong username or password.';
-      authSubmit.disabled = false;
-      return;
+    if (authMode === 'signup') {
+      if (users[u]) { authMsg.textContent = 'That username is taken.'; return; }
+      users[u] = { passwordHash: ph, lifetimeApples: 0 };
+      saveUsers(users);
+    } else {
+      if (!users[u]) { authMsg.textContent = 'No account named "' + u + '". Try Sign Up.'; return; }
+      if (users[u].passwordHash !== ph) { authMsg.textContent = 'Wrong password.'; return; }
     }
-  }
 
-  setCurrentUser(u);
-  lifetimeApples = (users[u] && users[u].lifetimeApples) || 0;
-  applyUserToUI();
-  authPass.value = '';
-  authSubmit.disabled = false;
-  authScreen.style.display = 'none';
-  overlay.style.display = 'flex';
+    setCurrentUser(u);
+    lifetimeApples = (users[u] && users[u].lifetimeApples) || 0;
+    applyUserToUI();
+    authPass.value = '';
+    authScreen.style.display = 'none';
+    overlay.style.display = 'flex';
+  } catch (err) {
+    authMsg.textContent = 'Error: ' + (err && err.message ? err.message : err);
+    if (window.console) console.error(err);
+  } finally {
+    authSubmit.disabled = false;
+  }
 }
 authSubmit.addEventListener('click', handleAuth);
 authPass.addEventListener('keydown', function(e){ if (e.key === 'Enter') handleAuth(); });
@@ -724,6 +935,13 @@ function resetWorld() {
   score = 0;
   updateScore();
   spawnApples();
+  clearTrolls();
+  trollSpawnTimer = TROLL_SPAWN_INTERVAL;
+  health = MAX_HEALTH;
+  updateHealth();
+  hurtTimer = 0;
+  if (hurtEl) hurtEl.style.opacity = '0';
+  if (gameoverEl) gameoverEl.style.display = 'none';
   camera.position.set(0, 1.7, 0);
   yaw = 0; pitch = 0;
 }
@@ -748,6 +966,20 @@ document.getElementById('homePlayBtn').addEventListener('click', function() {
   homeScreen.style.display = 'none';
   gameActive = true;
   startTime  = Date.now();
+});
+
+document.getElementById('retryBtn').addEventListener('click', function() {
+  gameoverEl.style.display = 'none';
+  resetWorld();
+  gameActive = true;
+  startTime  = Date.now();
+});
+
+document.getElementById('goHomeBtn').addEventListener('click', function() {
+  gameoverEl.style.display = 'none';
+  resetWorld();
+  gameActive = false;
+  homeScreen.style.display = 'flex';
 });
 
 document.getElementById('logoutBtn').addEventListener('click', function() {
@@ -779,8 +1011,14 @@ function animate(ts) {
   if (gameActive) {
     movePlayer(dt);
     checkPickups();
+    updateTrolls(dt, t);
   }
   applyCamera();
+
+  if (hurtTimer > 0) {
+    hurtTimer -= dt;
+    if (hurtEl) hurtEl.style.opacity = Math.max(0, hurtTimer / 0.4).toFixed(2);
+  }
 
   apples.forEach(function(apple) {
     if (!apple.collected) {
